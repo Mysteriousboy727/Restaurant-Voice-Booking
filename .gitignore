@@ -1,0 +1,85 @@
+ Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Environment variables
+.env
+backend/.env
+frontend/.env
+
+# Build files
+frontend/dist/
+frontend/build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+4. Add All Files
+bashgit add .
+5. Commit Your Changes
+bashgit commit -m "Initial commit: Restaurant voice booking system with frontend and backend"
+6. Rename Branch to Main
+bashgit branch -M main
+7. Add Remote Repository
+bashgit remote add origin https://github.com/Mysteriousboy727/Restaurant-Voice-Booking.git
+8. Push to GitHub
+bashgit push -u origin main
+If You Encounter Issues
+Issue: "Repository already exists"
+If the repository already has content, you might need to pull first:
+bashgit pull origin main --allow-unrelated-histories
+git push -u origin main
+Issue: Authentication Required
+You'll need to authenticate with GitHub. You have two options:
+Option 1: Personal Access Token
+
+Go to GitHub.com → Settings → Developer settings → Personal access tokens → Tokens (classic)
+Generate new token with repo permissions
+Use the token as your password when pushing
+
+Option 2: GitHub CLI
+bash# Install GitHub CLI first, then:
+gh auth login
+Issue: Already initialized Git
+If you see "already a git repository", just skip step 2 and continue from step 3.
+Create a README (Optional but Recommended)
+Before committing, create a proper README:
+bashnotepad README.md
+Add something like:
+markdown# Restaurant Voice Booking System
+
+A voice-enabled restaurant booking application with AI-powered conversation.
+
+## Features
+- Voice-based booking interaction
+- Real-time availability checking
+- MongoDB backend
+- React frontend with Vite
+
+## Setup
+
+### Backend
+```bash
+cd backend
+npm install
+npm start
+```
+
+### Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## Environment Variables
+Create `.env` files in both frontend and backend directories with required variables.
