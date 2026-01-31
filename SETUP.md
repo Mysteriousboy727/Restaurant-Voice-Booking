@@ -29,6 +29,8 @@ WEATHER_API_KEY=your_openweathermap_api_key_here
 - For MongoDB Atlas, use your connection string from the Atlas dashboard
 - Weather API key is optional. Get one from https://openweathermap.org/api (free tier available)
 
+added images
+
 4. Start the backend server:
 ```bash
 npm start
