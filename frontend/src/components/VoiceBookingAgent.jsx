@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Calendar, Users, Clock, User } from 'lucide-react';
+import { Mic, MicOff, Calendar, Users, Clock, User, MapPin } from 'lucide-react';
 import axios from 'axios';
 
-const VoiceBookingAgent = ({ onBookingComplete }) => {
+const VoiceBookingAgent = ({ restaurant, onBookingComplete, onPaymentRedirect }) => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [status, setStatus] = useState('Ready');
@@ -10,10 +10,13 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
     name: '',
     guests: '',
     date: '',
-    time: ''
+    time: '',
+    departureTime: ''
   });
   const [conversationStage, setConversationStage] = useState('initial');
   const [messages, setMessages] = useState([]);
+  const [totalCost, setTotalCost] = useState(0);
+  const [showPaymentRedirect, setShowPaymentRedirect] = useState(false);
   
   const recognitionRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
@@ -143,6 +146,9 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
       case 'asking_time':
         extractTime(input);
         break;
+      case 'asking_departure_time':
+        extractDepartureTime(input);
+        break;
       default:
         break;
     }
@@ -150,47 +156,45 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
 
   // Extract name from speech
   const extractName = (input) => {
-    const lowerInput = input.toLowerCase();
-    
-    // Pattern: "my name is X" or "I'm X" or "this is X" or just "X"
     let name = '';
     
-    if (lowerInput.includes('my name is')) {
+    if (input.toLowerCase().includes('my name is')) {
       name = input.split(/my name is/i)[1]?.trim();
-    } else if (lowerInput.includes("i'm") || lowerInput.includes("i am")) {
+    } else if (input.toLowerCase().includes("i'm") || input.toLowerCase().includes("i am")) {
       name = input.split(/i'm|i am/i)[1]?.trim();
-    } else if (lowerInput.includes('this is')) {
-      name = input.split(/this is/i)[1]?.trim();
     } else {
-      // Assume the entire input is the name
       name = input.trim();
     }
 
-    if (name) {
-      // Capitalize first letter of each word
+    if (name && name.length > 1) {
       name = name.split(' ').map(word => 
         word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
       ).join(' ');
       
       setBookingData(prev => ({ ...prev, name }));
       setConversationStage('asking_guests');
-      speak(`Great ${name}! How many guests will be joining you?`);
-    } else {
-      // If name extraction failed, ask again and restart recognition
-      if (conversationStage === 'asking_name') {
-        speak("I didn't catch your name. Could you please tell me your name again?");
+      speak(`Great ${name}! How many guests will be dining at ${restaurant.name}?`);
+      
+      setTimeout(() => {
         if (recognitionRef.current) {
-          setTimeout(() => {
-            if (recognitionRef.current) {
-              try {
-                recognitionRef.current.start();
-              } catch (e) {
-                console.log('Error restarting recognition:', e);
-              }
-            }
-          }, 500);
+          try {
+            recognitionRef.current.start();
+          } catch (e) {
+            console.log('Recognition restart:', e.message);
+          }
         }
-      }
+      }, 1000);
+    } else {
+      speak("I didn't catch your name. Could you please repeat it?");
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) {
+            console.log('Error restarting recognition:', e);
+          }
+        }
+      }, 500);
     }
   };
 
@@ -316,22 +320,19 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
     }
 
     if (time) {
-      const updatedBookingData = { ...bookingData, time };
-      setBookingData(updatedBookingData);
-      setConversationStage('complete');
-      setStatus('Booking Complete! ✓');
+      setBookingData(prev => ({ ...prev, time }));
+      setConversationStage('asking_departure_time');
+      speak(`Great! What time will you be leaving after dinner? For example, 10 PM or 10:30 PM.`);
       
-      // Stop listening after booking is complete
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (e) {
-          console.log('Error stopping recognition:', e);
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) {
+            console.log('Error restarting recognition:', e);
+          }
         }
-      }
-      
-      // Save booking to backend with updated data
-      await saveBooking(updatedBookingData);
+      }, 1000);
     } else {
       speak("I didn't catch the time. Please say a time like 7 PM or 7:30 PM.");
       // Restart recognition to continue listening
@@ -349,6 +350,70 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
     }
   };
 
+  // Extract departure time from speech
+  const extractDepartureTime = (input) => {
+    const lowerInput = input.toLowerCase();
+    let time = '';
+
+    const timeMatch = input.match(/(\d{1,2}):?(\d{2})?\s*(am|pm|a\.m\.|p\.m\.)?/i);
+    
+    if (timeMatch) {
+      let hour = parseInt(timeMatch[1]);
+      const minute = timeMatch[2] || '00';
+      const period = timeMatch[3]?.toLowerCase().replace('.', '');
+
+      if (period === 'pm' && hour < 12) hour += 12;
+      if (period === 'am' && hour === 12) hour = 0;
+
+      time = `${String(hour).padStart(2, '0')}:${minute}`;
+    }
+
+    if (time) {
+      const updatedBookingData = { ...bookingData, departureTime: time };
+      setBookingData(updatedBookingData);
+      
+      // Calculate total cost
+      const guests = parseInt(updatedBookingData.guests);
+      const costPerPerson = restaurant.pricePerPerson;
+      const subtotal = guests * costPerPerson;
+      const discount = (subtotal * restaurant.discount) / 100;
+      const tax = ((subtotal - discount) * 0.1); // 10% tax
+      const total = subtotal - discount + tax;
+      
+      setTotalCost(total);
+      setConversationStage('complete');
+      setStatus('Booking Complete! ✓');
+      
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          console.log('Error stopping recognition:', e);
+        }
+      }
+      
+      speak(`Perfect! Your booking details are ready. ${guests} guests at ${restaurant.name} from ${updatedBookingData.time} to ${time}. Total cost is ₹${Math.round(total)}. Proceeding to payment...`);
+      
+      setTimeout(() => {
+        setShowPaymentRedirect(true);
+        if (onPaymentRedirect) {
+          onPaymentRedirect(updatedBookingData, total);
+        }
+      }, 2000);
+    } else {
+      speak("Please say a time like 10 PM or 10:30 PM.");
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) {
+            console.log('Error restarting recognition:', e);
+          }
+        }
+      }, 500);
+    }
+  };
+
   // Save booking to backend
   const saveBooking = async (data = bookingData) => {
     try {
@@ -357,21 +422,21 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
         numberOfGuests: parseInt(data.guests),
         bookingDate: data.date,
         bookingTime: data.time,
-        cuisinePreference: 'Other',
-        specialRequests: '',
+        cuisinePreference: restaurant.cuisine,
+        specialRequests: `Booked at ${restaurant.name}`,
         seatingPreference: 'any'
       };
 
       const response = await axios.post('http://localhost:5000/api/bookings', bookingPayload);
       
-      speak(`Perfect! Your booking is confirmed for ${data.name}, ${data.guests} guests, on ${data.date} at ${data.time}. Your booking ID is ${response.data.booking.bookingId}. Thank you!`);
+      speak(`Excellent! Your booking is confirmed for ${data.name}, ${data.guests} guests, on ${data.date} at ${data.time} at ${restaurant.name}. Your booking ID is ${response.data.booking.bookingId}. Thank you!`);
       
       if (onBookingComplete) {
         onBookingComplete();
       }
     } catch (error) {
       console.error('Error saving booking:', error);
-      speak("I've saved your booking details, but there was an issue connecting to the server. Your booking details are still available.");
+      speak("Booking saved locally. There was a connection issue, but your details are secure.");
     }
   };
 
@@ -383,28 +448,21 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
     }
 
     setConversationStage('asking_name');
-    setBookingData({ name: '', guests: '', date: '', time: '' });
+    setBookingData({ name: '', guests: '', date: '', time: '', departureTime: '' });
     setMessages([]);
     setTranscript('');
     setStatus('Starting...');
     
     try {
-      // Wait a bit for the speak function to finish before starting recognition
-      speak("Hello! I'm your voice booking assistant. What's your name?");
+      speak(`Welcome to ${restaurant.name}! Let's complete your booking. What's your name?`);
       
-      // Start recognition after a short delay to ensure microphone permission is requested
       setTimeout(() => {
         if (recognitionRef.current) {
           try {
             recognitionRef.current.start();
           } catch (error) {
             console.error('Error starting recognition:', error);
-            if (error.message.includes('already started')) {
-              // Recognition is already running, that's fine
-            } else {
-              setStatus('Error starting microphone. Please check permissions.');
-              alert('Please allow microphone access to use voice booking.');
-            }
+            alert('Please allow microphone access.');
           }
         }
       }, 500);
@@ -427,149 +485,146 @@ const VoiceBookingAgent = ({ onBookingComplete }) => {
   const resetBooking = () => {
     stopListening();
     setConversationStage('initial');
-    setBookingData({ name: '', guests: '', date: '', time: '' });
+    setBookingData({ name: '', guests: '', date: '', time: '', departureTime: '' });
     setMessages([]);
     setTranscript('');
     setStatus('Ready');
+    setShowPaymentRedirect(false);
+    setTotalCost(0);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-8">
-      <div className="max-w-6xl mx-auto">
-        <header className="text-center mb-8">
-          <h1 className="text-5xl font-bold text-white mb-2 flex items-center justify-center gap-3">
-            🍽️ Restaurant Voice Booking
-          </h1>
-          <p className="text-xl text-white/90">Book your table using voice commands</p>
-        </header>
+    <div className="bg-white rounded-2xl shadow-2xl p-8 border-2 border-indigo-200">
+      <div className="flex items-center gap-3 mb-6">
+        <MapPin className="text-indigo-600" size={28} />
+        <div>
+          <h2 className="text-2xl font-bold text-indigo-600">Book at {restaurant.name}</h2>
+          <p className="text-gray-600">{restaurant.location} • {restaurant.cuisine}</p>
+        </div>
+      </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* Voice Agent Panel */}
-          <div className="bg-white rounded-3xl shadow-2xl p-8">
-            <div className="flex items-center gap-3 mb-6">
-              <Mic className="text-indigo-600" size={32} />
-              <h2 className="text-3xl font-bold text-indigo-600">Voice Booking Agent</h2>
-            </div>
-
-            {/* Status */}
-            <div className="flex items-center justify-center gap-3 mb-6">
-              <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`} />
-              <span className="text-lg font-medium text-gray-700">{status}</span>
-            </div>
-
-            {/* Control Button */}
-            <div className="flex gap-4 justify-center mb-6">
-              {conversationStage === 'initial' || conversationStage === 'complete' ? (
-                <button
-                  onClick={conversationStage === 'complete' ? resetBooking : startBooking}
-                  className="px-8 py-4 bg-indigo-600 text-white rounded-full font-semibold text-lg hover:bg-indigo-700 transition-colors shadow-lg"
-                >
-                  {conversationStage === 'complete' ? 'New Booking' : 'Start Booking'}
-                </button>
-              ) : (
-                <button
-                  onClick={stopListening}
-                  className="px-8 py-4 bg-red-500 text-white rounded-full font-semibold text-lg hover:bg-red-600 transition-colors shadow-lg flex items-center gap-2"
-                >
-                  <MicOff size={20} />
-                  Stop
-                </button>
-              )}
-            </div>
-
-            {/* Conversation Messages */}
-            <div className="bg-gray-50 rounded-xl p-4 h-64 overflow-y-auto mb-6">
-              {messages.length === 0 ? (
-                <p className="text-gray-400 text-center py-8">Click "Start Booking" to begin...</p>
-              ) : (
-                <div className="space-y-3">
-                  {messages.map((msg, idx) => (
-                    <div key={idx} className={`flex ${msg.sender === 'bot' ? 'justify-start' : 'justify-end'}`}>
-                      <div className={`max-w-[80%] px-4 py-2 rounded-2xl ${
-                        msg.sender === 'bot' 
-                          ? 'bg-indigo-100 text-indigo-900' 
-                          : 'bg-purple-500 text-white'
-                      }`}>
-                        {msg.text}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Booking Progress */}
-            <div className="bg-indigo-50 rounded-xl p-6">
-              <h3 className="text-xl font-bold text-indigo-600 mb-4">Booking Progress:</h3>
-              
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <User className="text-indigo-600" size={20} />
-                  <span className="font-medium text-gray-700">Name:</span>
-                  <span className="text-gray-900">{bookingData.name || '—'}</span>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <Users className="text-indigo-600" size={20} />
-                  <span className="font-medium text-gray-700">Guests:</span>
-                  <span className="text-gray-900">{bookingData.guests || '—'}</span>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <Calendar className="text-indigo-600" size={20} />
-                  <span className="font-medium text-gray-700">Date:</span>
-                  <span className="text-gray-900">{bookingData.date || '—'}</span>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <Clock className="text-indigo-600" size={20} />
-                  <span className="font-medium text-gray-700">Time:</span>
-                  <span className="text-gray-900">{bookingData.time || '—'}</span>
-                </div>
-              </div>
-            </div>
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Voice Agent Panel */}
+        <div>
+          {/* Status */}
+          <div className="flex items-center justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-xl">
+            <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`} />
+            <span className="text-lg font-medium text-gray-700">{status}</span>
           </div>
 
-          {/* Bookings List Panel */}
-          <div className="bg-white rounded-3xl shadow-2xl p-8">
-            <div className="flex items-center gap-3 mb-6">
-              <Calendar className="text-purple-600" size={32} />
-              <h2 className="text-3xl font-bold text-purple-600">All Bookings</h2>
-            </div>
-
-            {conversationStage === 'complete' && bookingData.name ? (
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-500 rounded-2xl p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                  <span className="text-green-700 font-bold">CONFIRMED</span>
-                </div>
-                
-                <div className="space-y-2">
-                  <p className="text-lg"><span className="font-semibold">Guest:</span> {bookingData.name}</p>
-                  <p className="text-lg"><span className="font-semibold">Party Size:</span> {bookingData.guests} people</p>
-                  <p className="text-lg"><span className="font-semibold">Date:</span> {bookingData.date}</p>
-                  <p className="text-lg"><span className="font-semibold">Time:</span> {bookingData.time}</p>
-                </div>
-              </div>
+          {/* Control Button */}
+          <div className="flex gap-4 justify-center mb-6">
+            {conversationStage === 'initial' || conversationStage === 'complete' ? (
+              <button
+                onClick={conversationStage === 'complete' ? resetBooking : startBooking}
+                className="px-8 py-4 bg-indigo-600 text-white rounded-full font-semibold text-lg hover:bg-indigo-700 transition-colors shadow-lg"
+              >
+                {conversationStage === 'complete' ? 'New Booking' : 'Start Voice Booking'}
+              </button>
             ) : (
-              <div className="text-center py-16">
-                <p className="text-gray-500 text-lg">No bookings yet. Create your first booking!</p>
+              <button
+                onClick={stopListening}
+                className="px-8 py-4 bg-red-500 text-white rounded-full font-semibold text-lg hover:bg-red-600 transition-colors shadow-lg flex items-center gap-2"
+              >
+                <MicOff size={20} />
+                Stop
+              </button>
+            )}
+          </div>
+
+          {/* Conversation Messages */}
+          <div className="bg-gray-50 rounded-xl p-4 h-56 overflow-y-auto">
+            {messages.length === 0 ? (
+              <p className="text-gray-400 text-center py-8">Click "Start Voice Booking" to begin...</p>
+            ) : (
+              <div className="space-y-3">
+                {messages.map((msg, idx) => (
+                  <div key={idx} className={`flex ${msg.sender === 'bot' ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`max-w-[80%] px-4 py-2 rounded-2xl ${
+                      msg.sender === 'bot' 
+                        ? 'bg-indigo-100 text-indigo-900' 
+                        : 'bg-purple-500 text-white'
+                    }`}>
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         </div>
 
-        {/* Instructions */}
-        <div className="mt-8 bg-white/10 backdrop-blur-sm rounded-2xl p-6 text-white">
-          <h3 className="text-xl font-bold mb-3">💡 How to use:</h3>
-          <ol className="list-decimal list-inside space-y-2">
-            <li>Click "Start Booking" and allow microphone access</li>
-            <li>Say your name when prompted (e.g., "My name is John" or just "John")</li>
-            <li>Tell the number of guests (e.g., "4 guests" or "four")</li>
-            <li>Say the date (e.g., "tomorrow" or "December 5th")</li>
-            <li>Say the time (e.g., "7 PM" or "7:30 PM")</li>
-            <li>Your booking will be confirmed!</li>
-          </ol>
+        {/* Booking Details */}
+        <div className="bg-indigo-50 rounded-xl p-6">
+          <h3 className="text-xl font-bold text-indigo-600 mb-4">Booking Details:</h3>
+          
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-3 bg-white rounded-lg">
+              <User className="text-indigo-600" size={20} />
+              <div>
+                <span className="text-sm text-gray-600">Name</span>
+                <p className="font-semibold text-gray-900">{bookingData.name || '—'}</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3 p-3 bg-white rounded-lg">
+              <Users className="text-indigo-600" size={20} />
+              <div>
+                <span className="text-sm text-gray-600">Guests</span>
+                <p className="font-semibold text-gray-900">{bookingData.guests || '—'}</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3 p-3 bg-white rounded-lg">
+              <Calendar className="text-indigo-600" size={20} />
+              <div>
+                <span className="text-sm text-gray-600">Date</span>
+                <p className="font-semibold text-gray-900">{bookingData.date || '—'}</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3 p-3 bg-white rounded-lg">
+              <Clock className="text-indigo-600" size={20} />
+              <div>
+                <span className="text-sm text-gray-600">Time</span>
+                <p className="font-semibold text-gray-900">{bookingData.time || '—'}</p>
+              </div>
+            </div>
+            
+            {bookingData.departureTime && (
+              <div className="flex items-center gap-3 p-3 bg-white rounded-lg">
+                <Clock className="text-indigo-600" size={20} />
+                <div>
+                  <span className="text-sm text-gray-600">Departure</span>
+                  <p className="font-semibold text-gray-900">{bookingData.departureTime}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {conversationStage === 'complete' && bookingData.name && (
+            <div className="mt-6 space-y-4">
+              <div className="p-4 bg-green-100 border-2 border-green-500 rounded-lg">
+                <p className="text-green-800 font-bold text-center">✓ Booking Confirmed!</p>
+              </div>
+              
+              {totalCost > 0 && (
+                <div className="p-4 bg-purple-100 border-2 border-purple-500 rounded-lg">
+                  <p className="text-gray-700 text-sm mb-2">Total Amount Due:</p>
+                  <p className="text-3xl font-bold text-purple-600">₹{Math.round(totalCost)}</p>
+                </div>
+              )}
+
+              {showPaymentRedirect && (
+                <button
+                  onClick={() => onSelectRestaurant(null)}
+                  className="w-full py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-white font-bold rounded-lg hover:shadow-lg transition"
+                >
+                  → Proceed to Payment
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
